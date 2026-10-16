@@ -1,3 +1,4 @@
+# Register the inherited workflow in this fork; no runtime behavior changes.
 name: Platform matrix
 
 on:
