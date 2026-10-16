@@ -10,7 +10,7 @@ import {
 } from "../src/container-engine.mjs";
 import {
   composeCommand, createDefaultConfig, initializeInstallation,
-  loadConfig, prepareInstallation, renderHostAccessCompose, renderWorkspaceCompose
+  loadConfig, prepareInstallation, renderHostAccessCompose, renderRuntimeEnv, renderWorkspaceCompose, saveConfig
 } from "../src/index.mjs";
 import { run } from "../src/cli.mjs";
 
@@ -172,6 +172,19 @@ test("Podman config is persisted and legacy Docker roots cannot be switched", as
   await assert.rejects(prepareInstallation(f.root, { version: "1.1.5", engine: "docker" }), /Switching container engines/);
   assert.equal(await readFile(join(f.root, "config.json"), "utf8"), before);
   assert.throws(() => createDefaultConfig({ version: "1.1.5", engine: "podman", accessMode: "host-root" }), /not supported with Podman/);
+});
+
+test("Podman selection and a consented install ID survive config reload and upgrade preparation", async (t) => {
+  const f = await fixture(t);
+  const installId = "synthetic-install-116";
+  const config = { ...createDefaultConfig({ version: "1.1.5", engine: "podman" }), telemetry: true, installId };
+  await saveConfig(f.root, config);
+  assert.deepEqual(await loadConfig(f.root), config);
+  const next = await prepareInstallation(f.root, { version: "1.1.6", engine: "podman" });
+  assert.equal(next.config.engine, "podman");
+  assert.equal(next.config.installId, installId);
+  assert.equal(next.config.telemetry, true);
+  assert.match(renderRuntimeEnv(next.config), /^SPACEAPP_INSTALL_ID=synthetic-install-116$/m);
 });
 
 test("workspace overrides preserve read-only flags, share SELinux labels and map the host owner without chown", () => {

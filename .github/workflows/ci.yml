@@ -10,8 +10,8 @@ on:
       - "apps/**"
       - "packages/**"
       - "scripts/**"
-      - "package.json"
-      - "package-lock.json"
+      - "package*.json"
+      - ".github/workflows/ci.yml"
   workflow_dispatch:
 
 permissions:
@@ -37,8 +37,8 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
 
-      # Fork-only validation: upstream explicitly exempts this source-export check.
       - name: Verify export provenance
+        # Issue #63 explicitly exempts this source-export gate for external contributors.
         continue-on-error: true
         run: node scripts/verify-export-provenance.mjs .
 
