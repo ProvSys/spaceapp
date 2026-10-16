@@ -80,16 +80,23 @@ jobs:
         run: |
           # Ephemeral runner bootstrap only; the launcher never changes host
           # delegation, linger or AppArmor policy on an operator machine.
+          sudo mkdir -p /etc/systemd/system/user@.service.d
+          printf '%s\n' '[Service]' 'Delegate=cpu cpuset io memory pids' | sudo tee /etc/systemd/system/user@.service.d/99-spaceapp-ci.conf > /dev/null
+          sudo systemctl daemon-reload
           sudo loginctl enable-linger "$(id -un)"
+          sudo systemctl restart "user@$(id -u).service"
           export XDG_RUNTIME_DIR="/run/user/$(id -u)"
           echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
-          sudo systemctl set-property "user@$(id -u).service" Delegate=yes
           # ubuntu-latest currently supplies 4.9; do not silently test an
           # unsupported engine. Homebrew includes current OCI/network helpers.
           if test "$(podman version --format '{{.Client.Version}}' | cut -d. -f1)" -lt 5; then
             /home/linuxbrew/.linuxbrew/bin/brew install podman
             echo '/home/linuxbrew/.linuxbrew/bin' >> "$GITHUB_PATH"
             export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
+            # The runner's distro containers.conf otherwise selects its old
+            # /usr/bin/crun, which rejects current OCI runtime-spec versions.
+            mkdir -p "$HOME/.config/containers/containers.conf.d"
+            printf '%s\n' '[engine]' 'runtime = "crun"' 'conmon_path = ["/home/linuxbrew/.linuxbrew/bin/conmon"]' '[engine.runtimes]' 'crun = ["/home/linuxbrew/.linuxbrew/bin/crun"]' > "$HOME/.config/containers/containers.conf.d/99-spaceapp-ci.conf"
             if command -v apparmor_parser >/dev/null; then
               sudo apparmor_parser --replace .github/ci/podman-brew.apparmor
             fi
@@ -101,6 +108,7 @@ jobs:
           test "$(podman version --format '{{.Client.Version}}' | cut -d. -f1)" -ge 5
           systemctl --user start podman.socket
           podman info --format '{{json .Host.Security.Rootless}}'
+          podman info --format '{{.Host.OCIRuntime.Path}} {{.Host.OCIRuntime.Version}}'
       - name: Install pinned Compose provider
         shell: bash
         run: |
