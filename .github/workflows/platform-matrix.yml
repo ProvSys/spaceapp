@@ -81,10 +81,13 @@ jobs:
         run: |
           # Ephemeral runner bootstrap only; the launcher never changes host
           # delegation, linger or AppArmor policy on an operator machine.
+          sudo mkdir -p /etc/systemd/system/user@.service.d
+          printf '%s\n' '[Service]' 'Delegate=cpu cpuset io memory pids' | sudo tee /etc/systemd/system/user@.service.d/99-spaceapp-ci.conf > /dev/null
+          sudo systemctl daemon-reload
           sudo loginctl enable-linger "$(id -un)"
+          sudo systemctl restart "user@$(id -u).service"
           export XDG_RUNTIME_DIR="/run/user/$(id -u)"
           echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
-          sudo systemctl set-property "user@$(id -u).service" Delegate=yes
           # ubuntu-latest currently supplies 4.9; do not silently test an
           # unsupported engine. Homebrew includes current OCI/network helpers.
           if test "$(podman version --format '{{.Client.Version}}' | cut -d. -f1)" -lt 5; then

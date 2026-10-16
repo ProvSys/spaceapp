@@ -6,6 +6,12 @@ on:
     branches:
       - main
       - ci/rootless-podman-validation
+    paths:
+      - "apps/**"
+      - "packages/**"
+      - "scripts/**"
+      - "package.json"
+      - "package-lock.json"
   workflow_dispatch:
 
 permissions:
