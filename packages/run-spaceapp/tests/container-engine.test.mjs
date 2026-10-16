@@ -110,14 +110,15 @@ test("a stopped macOS machine still offers the installed Podman CLI instead of i
 
 test("Podman capability checks fail early for old, rootful or undelegated engines and old providers", async () => {
   const good = await inspectContainerEngine(mockEngine().execute, "podman", { platform: "linux" });
-  assert.ok(podmanChecks(good).every((check) => check.ok));
+  assert.ok(podmanChecks(good, { platform: "linux" }).every((check) => check.ok));
+  assert.equal(podmanChecks(good, { platform: "darwin" }).find((check) => check.name === "Podman machine resources").ok, false);
   assert.ok(!JSON.stringify(good).includes("never-export-this"));
   for (const change of [{ version: "4.9.4" }, { rootless: false }, { cgroupVersion: "v1" },
     { cpuLimits: false }, { memoryLimits: false }, { composeVersion: "2.23.3" }, { composeVersion: null }]) {
-    assert.ok(podmanChecks({ ...good, ...change }).some((check) => !check.ok), JSON.stringify(change));
+    assert.ok(podmanChecks({ ...good, ...change }, { platform: "linux" }).some((check) => !check.ok), JSON.stringify(change));
   }
-  assert.ok(podmanChecks({ ...good, composeVersion: "5.6.0" }).every((check) => check.ok));
-  assert.equal((await inspectContainerEngine(mockEngine({ compose: "v2.38.2-desktop.1" }).execute, "podman")).composeVersion, "2.38.2");
+  assert.ok(podmanChecks({ ...good, composeVersion: "5.6.0" }, { platform: "linux" }).every((check) => check.ok));
+  assert.equal((await inspectContainerEngine(mockEngine({ compose: "v2.38.2-desktop.1" }).execute, "podman", { platform: "linux" })).composeVersion, "2.38.2");
 });
 
 test("macOS machine resources are allowlisted, checked per profile, with resize instructions", async () => {
