@@ -30,7 +30,7 @@ const stdout = new Writable({ write(chunk, _encoding, done) {
 const options = () => ({ env, stdin: Readable.from([]), stdout, stderr: stdout,
   execute: (spec, io) => executeCommand(spec, { ...io, stdin: process.stdin }) });
 const invoke = async (args, extra = {}) => {
-  const code = await run(args, { ...options(), ...extra });
+  const code = await run([...(process.env.SPACEAPP_CI_LOCAL_IMAGES === "1" ? ["--local-images"] : []), ...args], { ...options(), ...(process.env.SPACEAPP_CI_RUNTIME_VERSION ? { runtimeVersion: process.env.SPACEAPP_CI_RUNTIME_VERSION } : {}), ...extra });
   assert.equal(code, 0, `launcher ${args[0]} exited ${code}`);
 };
 async function podman(args) {
@@ -122,7 +122,7 @@ try {
   await invoke(["uninstall", "--purge-data"], { stdin: Readable.from(["DELETE\n"]) });
   for (const kind of ["container", "volume", "network"]) assert.deepEqual(await ownedResources(kind), [], `leaked ${kind}`);
   purged = true;
-  console.log(JSON.stringify({ test: "podman-launcher-smoke", profile, readyz: true, backup: true, extended, upgradeFrom: upgradeFrom ?? null, purged: true }));
+  console.log(JSON.stringify({ test: "podman-launcher-smoke", profile, runtimeVersion: process.env.SPACEAPP_CI_RUNTIME_VERSION ?? RUNTIME_VERSION, sourceBuilt: process.env.SPACEAPP_CI_LOCAL_IMAGES === "1", readyz: true, backup: true, extended, upgradeFrom: upgradeFrom ?? null, purged: true }));
 } finally {
   // Scope every fallback removal to the unpredictable project belonging to this
   // temporary fixture. Never run system prune, image prune or an unfiltered rm.

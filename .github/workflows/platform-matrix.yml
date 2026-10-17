@@ -1,72 +1,26 @@
-name: Platform matrix
+name: Podman acceptance gap probes
 
 on:
-  pull_request:
-    paths:
-      - "packages/run-spaceapp/**"
-      - "scripts/podman-launcher-smoke.mjs"
-      - ".github/ci/podman-brew.service"
-      - ".github/ci/podman-brew.apparmor"
-      - "package-lock.json"
-      - ".github/workflows/platform-matrix.yml"
   push:
     branches:
-      - main
+      - ci/rootless-podman-source-proof
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: platform-${{ github.workflow }}-${{ github.ref }}
+  group: podman-gap-probes-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  launcher:
-    name: Launcher / ${{ matrix.os }} / Node ${{ matrix.node }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            node: "22.23.0"
-          - os: macos-latest
-            node: "22.23.0"
-          - os: windows-latest
-            node: "22.23.0"
-          - os: windows-latest
-            node: "24"
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: ${{ matrix.node }}
-          cache: npm
-
-      - name: Install workspace dependencies on supported hosts
-        if: runner.arch != 'ARM64'
-        run: npm ci
-
-      - name: Install source workspace for the intentional x64 package rejection test
-        if: runner.arch == 'ARM64'
-        run: npm ci --force
-
-      - run: npm test -w run-spaceapp
-      - run: npm run check -w run-spaceapp
-      - run: npm run pack:dry-run -w run-spaceapp
-      - run: node packages/run-spaceapp/bin/spaceapp.mjs --version
-
   podman:
-    name: Rootless Podman / small / Ubuntu
+    name: Source-built 1.1.6 / rootless Podman / Ubuntu
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 60
     env:
       SPACEAPP_TELEMETRY: "0"
+      SPACEAPP_CI_LOCAL_IMAGES: "1"
       PODMAN_COMPOSE_WARNING_LOGS: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -75,6 +29,13 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22.23.0"
+      - name: Build unchanged release Dockerfile locally (never publish)
+        shell: bash
+        env:
+          DOCKER_BUILDKIT: "1"
+        run: |
+          docker build --build-arg TARGETARCH=amd64 --target core --tag ghcr.io/oll4com/spaceapp-core:1.1.6 .
+          docker build --build-arg TARGETARCH=amd64 --target cli --tag ghcr.io/oll4com/spaceapp-cli:1.1.6 .
       - name: Ensure Podman >=5 on the hosted runner
         shell: bash
         run: |
@@ -116,5 +77,47 @@ jobs:
           echo "40343e21ca777173e69cff5dbafeb37c6f81f3b0d57d9e597f036e95eb63e76a $RUNNER_TEMP/docker-compose" | sha256sum --check
           chmod 700 "$RUNNER_TEMP/docker-compose"
           echo "PODMAN_COMPOSE_PROVIDER=$RUNNER_TEMP/docker-compose" >> "$GITHUB_ENV"
-      - name: Install, readyz, backup and purge isolated small profile
+      - name: Import local source builds into rootless Podman
+        shell: bash
+        run: |
+          docker save ghcr.io/oll4com/spaceapp-core:1.1.6 ghcr.io/oll4com/spaceapp-cli:1.1.6 | podman load
+          podman pull docker.io/pgvector/pgvector:0.8.3-pg17-trixie@sha256:3a3147ccd9a0aee952bb69e1acea1eb3cc7183544185b87a662f872cfa47ae3b
+          podman images --format '{{.Repository}}:{{.Tag}} {{.ID}}'
+      - name: Install, readyz, backup and purge source-built small profile
         run: node scripts/podman-launcher-smoke.mjs small
+
+  mac-podman:
+    name: Intel Mac / Podman VM / published 1.1.5
+    runs-on: macos-15-intel
+    timeout-minutes: 25
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      SPACEAPP_TELEMETRY: "0"
+      PODMAN_COMPOSE_WARNING_LOGS: "false"
+      SPACEAPP_CI_RUNTIME_VERSION: "1.1.5"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22.23.0"
+      - name: Install Podman and Compose provider on disposable runner
+        run: |
+          brew list podman >/dev/null 2>&1 || brew install podman
+          brew list docker-compose >/dev/null 2>&1 || brew install docker-compose
+          echo "PODMAN_COMPOSE_PROVIDER=$(command -v docker-compose)" >> "$GITHUB_ENV"
+          podman --version
+          docker-compose version
+          sysctl kern.hv_support
+      - name: Create isolated rootless machine
+        run: |
+          podman machine init --cpus 4 --memory 8192 --disk-size 24 --rootful=false spaceapp-ci-proof
+          podman machine start spaceapp-ci-proof
+          podman machine inspect spaceapp-ci-proof
+          podman info --format '{{json .Host}}'
+      - name: Small runtime acceptance with published 1.1.5 (not 1.1.6 proof)
+        run: node scripts/podman-launcher-smoke.mjs small
+      - name: Remove only this disposable fixture machine
+        if: always()
+        run: podman machine rm --force spaceapp-ci-proof
