@@ -58,6 +58,14 @@ purges only its own test volumes/network and removes the fixture on exit.
 Do not use an operator installation as a fixture; port 4911 must be free.
 These opt-in checks download images but do not need accounts or provider keys.
 
+The Ubuntu Podman CI job builds the unchanged release Dockerfile's `core` and
+`cli` targets locally, imports them into rootless Podman, and runs the smoke
+fixture with `--local-images`. This tests the candidate even before its release
+tags are published; nothing is pushed to a registry. Docker is only the CI
+image builder, not the runtime engine. The fixture reports the runtime version
+and whether local images were used. Normal installs still download the
+maintainer's published images and do not silently fall back to another release.
+
 Run the same command in Linux, macOS, or Windows 11 Command Prompt:
 
 ```bash
