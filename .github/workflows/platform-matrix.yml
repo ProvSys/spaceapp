@@ -1,91 +1,19 @@
-name: Podman acceptance gap probes
+name: Intel Mac Podman acceptance probe
 
 on:
   push:
     branches:
-      - ci/rootless-podman-source-proof
+      - ci/rootless-podman-macos-proof
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: podman-gap-probes-${{ github.ref }}
+  group: mac-podman-proof-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  podman:
-    name: Source-built 1.1.6 / rootless Podman / Ubuntu
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    env:
-      SPACEAPP_TELEMETRY: "0"
-      SPACEAPP_CI_LOCAL_IMAGES: "1"
-      PODMAN_COMPOSE_WARNING_LOGS: "false"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: "22.23.0"
-      - name: Build unchanged release Dockerfile locally (never publish)
-        shell: bash
-        env:
-          DOCKER_BUILDKIT: "1"
-        run: |
-          docker build --build-arg TARGETARCH=amd64 --target core --tag ghcr.io/oll4com/spaceapp-core:1.1.6 .
-          docker build --build-arg TARGETARCH=amd64 --target cli --tag ghcr.io/oll4com/spaceapp-cli:1.1.6 .
-      - name: Ensure Podman >=5 on the hosted runner
-        shell: bash
-        run: |
-          # Ephemeral runner bootstrap only; the launcher never changes host
-          # delegation, linger or AppArmor policy on an operator machine.
-          sudo mkdir -p /etc/systemd/system/user@.service.d
-          printf '%s\n' '[Service]' 'Delegate=cpu cpuset io memory pids' | sudo tee /etc/systemd/system/user@.service.d/99-spaceapp-ci.conf > /dev/null
-          sudo systemctl daemon-reload
-          sudo loginctl enable-linger "$(id -un)"
-          sudo systemctl restart "user@$(id -u).service"
-          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
-          # ubuntu-latest currently supplies 4.9; do not silently test an
-          # unsupported engine. Homebrew includes current OCI/network helpers.
-          if test "$(podman version --format '{{.Client.Version}}' | cut -d. -f1)" -lt 5; then
-            /home/linuxbrew/.linuxbrew/bin/brew install podman
-            echo '/home/linuxbrew/.linuxbrew/bin' >> "$GITHUB_PATH"
-            export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
-            # The runner's distro containers.conf otherwise selects its old
-            # /usr/bin/crun, which rejects current OCI runtime-spec versions.
-            mkdir -p "$HOME/.config/containers/containers.conf.d"
-            printf '%s\n' '[engine]' 'runtime = "crun"' 'conmon_path = ["/home/linuxbrew/.linuxbrew/bin/conmon"]' '[engine.runtimes]' 'crun = ["/home/linuxbrew/.linuxbrew/bin/crun"]' > "$HOME/.config/containers/containers.conf.d/99-spaceapp-ci.conf"
-            if command -v apparmor_parser >/dev/null; then
-              sudo apparmor_parser --replace .github/ci/podman-brew.apparmor
-            fi
-            systemctl --user stop podman.socket podman.service
-            install -D -m 644 .github/ci/podman-brew.service "$HOME/.config/systemd/user/podman.service"
-            systemctl --user daemon-reload
-          fi
-          podman --version
-          test "$(podman version --format '{{.Client.Version}}' | cut -d. -f1)" -ge 5
-          systemctl --user start podman.socket
-          podman info --format '{{json .Host.Security.Rootless}}'
-          podman info --format '{{.Host.OCIRuntime.Path}} {{.Host.OCIRuntime.Version}}'
-      - name: Install pinned Compose provider
-        shell: bash
-        run: |
-          curl --fail --location --retry 3 --output "$RUNNER_TEMP/docker-compose" https://github.com/docker/compose/releases/download/v5.6.0/docker-compose-linux-x86_64
-          echo "40343e21ca777173e69cff5dbafeb37c6f81f3b0d57d9e597f036e95eb63e76a $RUNNER_TEMP/docker-compose" | sha256sum --check
-          chmod 700 "$RUNNER_TEMP/docker-compose"
-          echo "PODMAN_COMPOSE_PROVIDER=$RUNNER_TEMP/docker-compose" >> "$GITHUB_ENV"
-      - name: Import local source builds into rootless Podman
-        shell: bash
-        run: |
-          docker save ghcr.io/oll4com/spaceapp-core:1.1.6 ghcr.io/oll4com/spaceapp-cli:1.1.6 | podman load
-          podman pull docker.io/pgvector/pgvector:0.8.3-pg17-trixie@sha256:3a3147ccd9a0aee952bb69e1acea1eb3cc7183544185b87a662f872cfa47ae3b
-          podman images --format '{{.Repository}}:{{.Tag}} {{.ID}}'
-      - name: Install, readyz, backup and purge source-built small profile
-        run: node scripts/podman-launcher-smoke.mjs small
-
   mac-podman:
     name: Intel Mac / Podman VM / published 1.1.5
     runs-on: macos-15-intel
@@ -102,13 +30,20 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "22.23.0"
-      - name: Install Podman and Compose provider on disposable runner
+      - name: Install checksum-pinned official Intel Podman and Compose
+        shell: bash
         run: |
-          brew list podman >/dev/null 2>&1 || brew install podman
-          brew list docker-compose >/dev/null 2>&1 || brew install docker-compose
-          echo "PODMAN_COMPOSE_PROVIDER=$(command -v docker-compose)" >> "$GITHUB_ENV"
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/podman.pkg" https://github.com/podman-container-tools/podman/releases/download/v5.8.7/podman-installer-macos-amd64.pkg
+          echo "a05640de459ce1a7ecb8ece4af107f64523e5fa9ecda78f01df11d606394b1e2  $RUNNER_TEMP/podman.pkg" | shasum -a 256 --check
+          sudo installer -pkg "$RUNNER_TEMP/podman.pkg" -target /
+          export PATH="/opt/podman/bin:$PATH"
+          echo "/opt/podman/bin" >> "$GITHUB_PATH"
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/docker-compose" https://github.com/docker/compose/releases/download/v5.6.0/docker-compose-darwin-x86_64
+          echo "c76e3abf5fde1aeb3bd7c7306ff15bef2246afc1f9e54832a0a050dd7cdfb2f8  $RUNNER_TEMP/docker-compose" | shasum -a 256 --check
+          chmod 700 "$RUNNER_TEMP/docker-compose"
+          echo "PODMAN_COMPOSE_PROVIDER=$RUNNER_TEMP/docker-compose" >> "$GITHUB_ENV"
           podman --version
-          docker-compose version
+          "$RUNNER_TEMP/docker-compose" version
           sysctl kern.hv_support
       - name: Create isolated rootless machine
         run: |
